@@ -10,8 +10,6 @@ import os
 
 
 from PyQt5 import QtCore, QtGui, QtWidgets
-
-
 class Ui_RoverTab(QtWidgets.QWidget):
 
     def setupUi(self, RoverTab):
@@ -88,6 +86,8 @@ class Ui_RoverTab(QtWidgets.QWidget):
         self.label_5.setText(_translate("RoverTab", "Pos X:"))
         self.label_6.setText(_translate("RoverTab", "Pos Y:"))
         self.label_7.setText(_translate("RoverTab", "Pos Z:"))
+
+    ### --- END OF GENERATED CODE ---
 
     def __init__(self):
         super().__init__()
