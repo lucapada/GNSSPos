@@ -21,6 +21,8 @@ from EarthdataDownload import SessionWithHeaderRedirection
 from PyQt5 import QtCore, QtGui, QtWidgets
 import RoverTab
 from Distances import Ui_DistancesWindow
+from CustomTimeDialog import CustomTimeDialog
+from datetime import datetime
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -444,7 +446,7 @@ class Ui_MainWindow(object):
                             # "%ha: 3H Hour (00,03,21) [" +        str(self.DATETIME_INFO['%ha']) + "]\n"
                             # "%hb: 6H Hour (00,06, 12, 18) [" +   str(self.DATETIME_INFO['%hb']) + "]\n"
                             # "%hc: 124 Hour (00,12) [" +          str(self.DATETIME_INFO['%hc']) + "]")
-        QtWidgets.QMessageBox().information(self.MainWindow, "Keyword Replacement in File Path", popupDescription)
+        QtWidgets.QtWidgets.QMessageBox().information(self.MainWindow, "Keyword Replacement in File Path", popupDescription)
 
     def timeFromYMD(self, y, m, d):
         tm = time.struct_time((y, m, d, 0, 0, 0, 0, 0, 0))
@@ -523,8 +525,8 @@ class Ui_MainWindow(object):
             return file[0:len(file)-2]
 
     def downloadGenericFiles(self):
-        if os.path.isdir(self.tWorkingDir.text()):
-            # try:
+        if os.path.isdir(self.tWorkingDir.text()) and self.calendarDT.selectedDate() is not None:
+            try:
                 # 0) aggiorno le variabili con la selezione dei dati definitiva
                 self.updateDateTimeInfo()
                 # 1) accedo al portale NASA per il download dei dati
@@ -547,10 +549,10 @@ class Ui_MainWindow(object):
                         self.printLog("Daily Orbit File downloaded in: " + dailyOrbitPath)
                         self.ORBIT_PATH = self.extractFile(dailyOrbitPath)
                         break
-            # except:
-            #     self.printError("Exception during download of files.")
+            except:
+                self.printError("Exception during download of files.")
         else:
-            self.printError("Checks whether the selected working directory exists and it is correct.")
+            self.printError("Checks whether the selected working directory exists and it is correct or to have selected a valid date in the calendar.")
 
     def addRover(self):
         self.tabWidget.addTab(RoverTab.Ui_RoverTab(), "Rover " + str(self.tabWidget.count() + 1))
@@ -572,8 +574,8 @@ class Ui_MainWindow(object):
 
     def updateDistances(self, newDistances):
         self.distances = newDistances
-        print("Distances Updated: ")
-        print(self.distances)
+        # print("Distances Updated: ")
+        # print(self.distances)
 
     def checkDistances(self):
         for v in self.distances.values():
@@ -581,8 +583,13 @@ class Ui_MainWindow(object):
                 return False
         return True
 
-    def readPositions(self):
+    def readPositions(self, convertUTM = False, addTypo = False, saveNewPosToFile = False):
         positions = {}
+
+        if convertUTM is True:
+            t32 = Transformer.from_crs("EPSG:4326", "EPSG:32632", always_xy=True)
+            t33 = Transformer.from_crs("EPSG:4326", "EPSG:32633", always_xy=True)
+
         for kR, vR in enumerate(self.posFiles):
             with open(vR, "r") as posFile:
                 linee = posFile.readlines()
@@ -602,6 +609,13 @@ class Ui_MainWindow(object):
                 age = []
                 ratio = []
 
+                typo = [] # Static or Kinematic
+                
+                utmLat = [] # UTM Latitude 32N or 33N
+                utmLong = [] # UTM Longitude 32N or 33N
+                utmZone = [] # 32N or 33N
+                
+
                 for l in linee[1:]:
                     # https://epsg.io/4327
                     column = re.split(r'\s+', l.strip())
@@ -620,6 +634,18 @@ class Ui_MainWindow(object):
                     sdun.append(float(column[12]))
                     age.append(float(column[13]))
                     ratio.append(float(column[14]))
+
+                    if addTypo is True and len(column) > 14: 
+                        typo.append(str(column[15]))
+                    if convertUTM is True:
+                        utmZone.append("32N" if float(column[3]) > 12 else "33N")
+                        
+                        # TODO: check se è corretto l'ordine...
+                        # 164997.3920824355 (long)	4943715.500997538 (lat) o il contrario?
+                        uLat, uLong = t32.transform(float(column[3]), float(column[2])) if float(column[3]) > 12 else t33.transform(float(column[3]), float(column[2]))
+                        utmLat.append(uLat)
+                        utmLong.append(uLong)
+                    
 
                 # Set tilemap limits (10% of the difference on each axis is added)
                 delta_lat = 0.1 * (max(lat) - min(lat))
@@ -650,9 +676,34 @@ class Ui_MainWindow(object):
                     "max_long":max_lon,
                     "max_lat":max_lat,
                     "delta_lon":delta_lon,
-                    "delta_lat":delta_lat
+                    "delta_lat":delta_lat,
                 }
+
+                if addTypo is True and len(column) > 14: 
+                    positions[kR]["typo"] = typo
+                if convertUTM is True:
+                    positions[kR]["utmLat"] = utmLat
+                    positions[kR]["utmLong"] = utmLong
+                    positions[kR]["utmZone"] = utmZone
+
+            if saveNewPosToFile is True:
+                with open(vR[:-4] + "_NEW.pos", "w") as newFile:
+                    # stampo le intestazioni
+                    for kH, header in enumerate(positions[kR].keys()):
+                        if kH == 0:
+                            newFile.write(header)
+                        else:
+                            newFile.write("\t" + header)
+                    newFile.write("\n")
+                    # stampo i dati
+                    for kL in range(len(positions[kR]["timestamps"])):
+                        for kF, F in enumerate(positions[kR].keys()):
+                            toWrite = positions[kR][F] if isinstance(positions[kR][F], float) else positions[kR][F][kL]
+                            newFile.write(str(toWrite) if kF == 0 else "\t" + str(toWrite))
+                        newFile.write("\n")
+
         self.printLog("All .pos files loaded and ready to be used for the algorithm or plot.")
+
         return positions
 
     def plotPositions(self):
@@ -666,15 +717,15 @@ class Ui_MainWindow(object):
         # TODO: aggiungere la rappresentazione finale...
         fig, axs = plt.subplots(1,1,figsize=(8,8), dpi=90)
         for kR in positions:
-            utm_x = []
-            utm_y = []
+            proj_x = []
+            proj_y = []
 
             for kL in range(len(positions[kR]["lat"])):
                 dx, dy = transformer.transform(positions[kR]["long"][kL],positions[kR]["lat"][kL])
-                utm_x.append(dx)
-                utm_y.append(dy)
+                proj_x.append(dx)
+                proj_y.append(dy)
 
-            axs.plot(utm_x, utm_y, ":r.", label="Rover " + str(kR+1), markersize=2, color=colors[kR])
+            axs.plot(proj_x, proj_y, ":r.", label="Rover " + str(kR+1), markersize=2, color=colors[kR])
 
         ctx.add_basemap(axs, crs='EPSG:3857', source=ctx.providers.OpenStreetMap.Mapnik)
 
@@ -692,6 +743,10 @@ class Ui_MainWindow(object):
         # 3) siano state inserite le distanze
         if os.path.isdir(self.tWorkingDir.text()) and self.tabWidget.count() >= 3 and self.checkDistances():
             error = False
+
+            self.btnRUN.setEnabled(False)
+            self.btnPlotPositions.setEnabled(False)
+            
             # 0) TODO: gestisco la base/stazione permanente
 
             # 1) passo in rassegna tutti i rover e, mentre verifico i dati, creo un dizionario in cui metto tutto
@@ -708,6 +763,11 @@ class Ui_MainWindow(object):
                 if os.path.isfile(obsFile):
                     if chkNav is False:
                         navFile = self.EPH_PATH
+                    else:
+                        if os.path.isfile(navFile) is False:
+                            self.printError("NAV file for " + self.tabWidget.tabText(r) + " is not valid.")
+                            error = True
+                            break
                 else:
                     self.printError("OBS file for " + self.tabWidget.tabText(r) + " is not valid.")
                     error = True
@@ -724,7 +784,6 @@ class Ui_MainWindow(object):
                     binPath = os.path.dirname(os.path.abspath(__file__)) + "/RTKLIB/rnx2rtkp"
 
                 cfgFile = os.path.dirname(os.path.abspath(__file__)) + "/post_processing.conf"
-                posFile = dataPath + self.tabWidget.tabText(r).replace(" ","_") + ".pos"
 
                 timeSettings = ""
                 if self.chkStartingTime.isChecked(): timeSettings += "-ts \"" + self.DATETIME_INFO['%Y'] + "/" + self.DATETIME_INFO['%m'] + "/" + self.DATETIME_INFO['%d'] + "\" \"" + self.tStartingTime.text() + ":00\""
@@ -765,11 +824,23 @@ class Ui_MainWindow(object):
                 
                 # cmd_text = r'%s -p 0 -x 0 -y 2 -k %s -o %s %s -t -e %s %s %s' % (binPath, cfgFile, posFile, timeSettings, obsFile, navFile, self.ORBIT_PATH)
                 # cmd_text = r'%s -k "%s" -o "%s" %s -p 7 -e -t -y 2 "%s" "%s" "%s"' % (binPath, cfgFile, posFile, timeSettings, obsFile, navFile, self.ORBIT_PATH)
-                cmd_text = r'%s -o "%s" %s -k %s -p 7 -f 2 -t -y 2 "%s" "%s" "%s"' % (binPath, posFile, timeSettings, cfgFile, obsFile, navFile, self.ORBIT_PATH)
-
+                
+                # genero due soluzioni: una statica e l'altra kinematica
+                # 8) ppp-static
+                posFile = dataPath + self.tabWidget.tabText(r).replace(" ","_") + "_static.pos"
+                cmd_text = r'%s -o "%s" %s -k %s -p 8 -f 2 -t -y 2 "%s" "%s" "%s"' % (binPath, posFile, timeSettings, cfgFile, obsFile, navFile, self.ORBIT_PATH)
                 print(cmd_text)
+                self.printLog("************* Generating Solution (PPP-STATIC) of '%s' *************" % (self.tabWidget.tabText(r)))
+                self.printLog(cmd_text)
+                # os.system(cmd_text)
+                self.printLog(os.popen(cmd_text).read())
+                self.printLog("************* '%s' DONE *************" % (self.tabWidget.tabText(r)))
 
-                self.printLog("************* Generating Solution of '%s' *************" % (self.tabWidget.tabText(r)))
+                # 7) ppp-kinematic
+                posFile = dataPath + self.tabWidget.tabText(r).replace(" ","_") + "_kinematic.pos"
+                cmd_text = r'%s -o "%s" %s -k %s -p 7 -f 2 -t -y 2 "%s" "%s" "%s"' % (binPath, posFile, timeSettings, cfgFile, obsFile, navFile, self.ORBIT_PATH)
+                print(cmd_text)
+                self.printLog("************* Generating Solution (PPP-KINEMATIC) of '%s' *************" % (self.tabWidget.tabText(r)))
                 self.printLog(cmd_text)
                 # os.system(cmd_text)
                 self.printLog(os.popen(cmd_text).read())
@@ -784,13 +855,86 @@ class Ui_MainWindow(object):
                 #     "POS": posFile
                 # }
 
-                self.posFiles.append(posFile)
+                self.posFiles.append(posFile) # di default prende la kinematic
             
+            # 2) carico i risultati letti (kinematic) nella struttura dati
+            positions = self.readPositions(False, False)
+
+            # 3) chiedo all'utente quando è che il velivolo si inizia a muovere
+            self.startMovingTime = positions[0]["timestamps"][0]
+            self.isStartMovingTimeSet = False
+            
+            dialog = CustomTimeDialog(self)
+            # dialog.setWindowFlags(dialog.windowFlags() & ~QtCore.Qt.WindowCloseButtonHint)
+            dialog.exec_()
+
+            # ho il contenuto nella variabile "startMovingTime" e "isStartMovingTimeSet"
+            date_to_check = datetime.strptime(self.startMovingTime, "%Y/%m/%d %H:%M:%S.%f") #.date()
+            start_date = datetime.strptime(positions[0]["timestamps"][0], "%Y/%m/%d %H:%M:%S.%f") #.date()
+            end_date = datetime.strptime(positions[0]["timestamps"][-1], "%Y/%m/%d %H:%M:%S.%f") #.date()
+
+            # per ciascun rover, leggo i files
+            for kPF, posFile in enumerate(self.posFiles):
+                copyPosFileName = posFile
+                kinPosFileName = copyPosFileName
+                newPosFileName = copyPosFileName.replace("_kinematic", "")
+                statPosFileName = copyPosFileName.replace("_kinematic", "_static")
+
+                if self.isStartMovingTimeSet is True and date_to_check >= start_date and date_to_check <= end_date: 
+                    # per ciascun rover, leggo entrambi static e kinematic
+                    kinPositions = []
+                    statPositions = []
+                    with open(kinPosFileName, "r") as kinFile:
+                        kinPositions = kinFile.readlines()
+                    with open(statPosFileName, "r") as statFile:
+                        statPositions = statFile.readlines()
+                    # combino static e kinematic nel file definitivo
+                    with open(newPosFileName, "w") as newFile:
+                        for kP, position in enumerate(statPositions):
+                            column = re.split(r'\s+', position.strip())
+                            if column[0] == "%":
+                                newFile.write(position.rstrip('\n') + " type\n")
+                            else:
+                                position_date = datetime.strptime(column[0] + " " + column[1], "%Y/%m/%d %H:%M:%S.%f") #.date()
+                                if position_date <= date_to_check:
+                                    newFile.write(statPositions[kP].rstrip('\n') + " S\n")
+                                else:
+                                    newFile.write(kinPositions[kP].rstrip('\n') + " K\n")
+                    # TODO: elimino static e kinematic(?)
+                    os.remove(statPosFileName)
+                    os.remove(kinPosFileName)
+                else:
+                    # uso solo il kinematic
+                    linee = []
+                    with open(posFile, "r") as newFile:
+                        for kL, linea in enumerate(newFile.readlines()):
+                            linea = linea.rstrip('\n')
+                            if kL == 0:
+                                linea += " type\n"
+                            else:
+                                linea += " K\n"
+                            linee.append(linea)
+                    with open(posFile, "w") as newFile:
+                        newFile.writelines(linee)
+                    # rinomino il "_kinematic" togliendo il "_kinematic"
+                    os.rename(posFile, newPosFileName)
+                    # elimino lo "_static"
+                    os.remove(statPosFileName)
+                
+                # aggiorno la lista dei file
+                self.posFiles[kPF] = newPosFileName
+                # TODO: check se gli "stat" servono o meno
+                # elimino gli "stat"
+                os.remove(kinPosFileName + ".stat")
+                os.remove(statPosFileName + ".stat")
+
+            # 4) ricarico le positions dal .pos definitivo...
+            positions = self.readPositions(True, True, True)
+            print("OK")
+
             # abilito la possibilità di plottare il grafico...
             self.btnPlotPositions.setEnabled(True)
-
-            # 2) carico i risultati letti nella struttura dati
-            positions = self.readPositions()
+            self.btnRUN.setEnabled(True)
 
             # 3) implementazione algoritmo
             # if error is not False:

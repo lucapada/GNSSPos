@@ -43,6 +43,6 @@ class Ui_DistancesWindow(QtWidgets.QMainWindow):
         self.setGeometry(200, 200, 300, 200)  # Imposta le dimensioni della finestra
 
     def setDistance(self, val):
-        print(self.focusWidget().objectName())
+        # print(self.focusWidget().objectName())
         self.distances[self.focusWidget().objectName()[9:]] = float(val)
         self.parentWindow.updateDistances(self.distances)
