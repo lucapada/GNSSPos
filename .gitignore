@@ -3,3 +3,4 @@ venv_new
 .env
 __pycache__
 test*
+TODO*
