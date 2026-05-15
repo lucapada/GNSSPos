@@ -245,7 +245,7 @@ def algorithm():
                     new_row['z-ecef(m)'] = (prev_row['z-ecef(m)'] + next_row['z-ecef(m)']) / 2
                     # Q e ns: non mi interessa...
                     new_row['Q'] = min(prev_row['Q'], next_row['Q'])
-                    new_row['ns'] = max(prev_row['ns'], next_row['ns'])                
+                    new_row['ns'] = min(prev_row['ns'], next_row['ns'])                
                     # sdx(m), sdy(m), sdz(m), sdxy(m), sdyz(m), sdzx(m): prendo il valore più alto
                     new_row['sdx(m)'] = max(prev_row['sdx(m)'], next_row['sdx(m)'])
                     new_row['sdy(m)'] = max(prev_row['sdy(m)'], next_row['sdy(m)'])
@@ -254,7 +254,7 @@ def algorithm():
                     new_row['sdyz(m)'] = max(prev_row['sdyz(m)'], next_row['sdyz(m)'])
                     new_row['sdzx(m)'] = max(prev_row['sdzx(m)'], next_row['sdzx(m)'])
                     # age(s) e ratio: non mi interessa...
-                    new_row['age(s)'] = max(prev_row['age(s)'], next_row['age(s)'])
+                    new_row['age(s)'] = 0 # max(prev_row['age(s)'], next_row['age(s)'])
                     new_row['ratio'] = max(prev_row['ratio'], next_row['ratio'])
                     
                     # aggiorno la riga al DataFrame
