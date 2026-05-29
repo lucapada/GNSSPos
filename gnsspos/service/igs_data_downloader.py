@@ -97,31 +97,69 @@ class IGSDataDownloader(requests.Session):
     
     def downloadBroadcastEphemeris(self, save_path: str) -> str:
         """
-        Download the daily broadcast ephemeris file (https://igs.org/data/#broadcast_ephemerides).
-        More there: https://cddis.nasa.gov/Data_and_Derived_Products/GNSS/broadcast_ephemeris_data.html
+        Download the daily broadcast ephemeris file.
+
+        Tries the following products in priority order (best → fallback):
+
+        1. RINEX 3 IGS combined multi-GNSS: daily/YYYY/DDD/YYp/
+           BRDC00IGS_R_YYYYDDD0000_01D_MN.rnx.gz
+        2. RINEX 3 DLR merged multi-GNSS: daily/YYYY/DDD/YYp/
+           BRDM00DLR_S_YYYYDDD0000_01D_MN.rnx.gz
+        3. RINEX 2 GPS-only: daily/YYYY/DDD/YYn/brdcDDD0.YYn.gz
+        4. RINEX 2 GPS-only (alternate path): daily/YYYY/brdc/brdcDDD0.YYn.gz
+
+        Note: multi-GNSS combined files (BRDC/BRDM) live in the YYp/ directory,
+        alongside individual-station MN files. The YYb/ directory does not exist
+        on CDDIS for most dates.
+
+        References:
+          https://igs.org/data/#daily_data
+          https://cddis.nasa.gov/Data_and_Derived_Products/GNSS/broadcast_ephemeris_data.html
         """
         found = False
-        # The starting directory for the daily files is: https://cddis.nasa.gov/archive/gnss/data/daily/
         startURL = f"{self.PROVIDER_URL}data/daily/"
-        # Note, for data created before December 1, 2020, the files are Unix compressed with extension .Z
-        ext = "gz" if datetime.strptime(self._date_obj['date_str'], '%Y-%m-%d') >= datetime(2020, 12, 1) else "Z"
-        # Append the following directory and file names to the starting directory:
-        # YYYY/DDD/YYn/brdcDDD0.YYn.gz   (merged GPS broadcast ephemeris file) or YYYY/brdc/brdcDDD0.YYn.gz (merged GPS broadcast ephemeris file)
-        url1 = f"{startURL}{self._date_obj['YYYY']}/{self._date_obj['DDD']}/{self._date_obj['YY']}n/brdc{self._date_obj['DDD']}0.{self._date_obj['YY']}n.{ext}"
-        url2 = f"{startURL}{self._date_obj['YYYY']}/brdc/brdc{self._date_obj['DDD']}0.{self._date_obj['YY']}n.{ext}"
-        # Here (https://cddis.nasa.gov/Data_and_Derived_Products/GNSS/daily_gps_b.html) it also appears the following path:
-        # YYYY/DDD/YYn/brdcDDD0.YYn.gz   (merged GPS broadcast ephemeris file)
-        for url in [url1, url2]:
+        is_new = datetime.strptime(self._date_obj['date_str'], '%Y-%m-%d') >= datetime(2020, 12, 1)
+        ext = "gz" if is_new else "Z"
+
+        YYYY = self._date_obj['YYYY']
+        YY   = self._date_obj['YY']
+        DDD  = f"{self._date_obj['DDD']:03d}"
+
+        url_candidates = []
+
+        # 1. RINEX 3 IGS combined multi-GNSS (best) — YYp/ directory
+        if is_new:
+            url_candidates.append(
+                f"{startURL}{YYYY}/{DDD}/{YY}p/BRDC00IGS_R_{YYYY}{DDD}0000_01D_MN.rnx.gz"
+            )
+
+        # 2. RINEX 3 DLR merged multi-GNSS — YYp/ directory
+        if is_new:
+            url_candidates.append(
+                f"{startURL}{YYYY}/{DDD}/{YY}p/BRDM00DLR_S_{YYYY}{DDD}0000_01D_MN.rnx.gz"
+            )
+
+        # 3. RINEX 2 GPS-only (primary path)
+        url_candidates.append(
+            f"{startURL}{YYYY}/{DDD}/{YY}n/brdc{DDD}0.{YY}n.{ext}"
+        )
+
+        # 4. RINEX 2 GPS-only (alternate legacy path)
+        url_candidates.append(
+            f"{startURL}{YYYY}/brdc/brdc{DDD}0.{YY}n.{ext}"
+        )
+
+        for url in url_candidates:
             try:
-                
                 file_name = self.download(url, save_path)
                 self._files_obj['broadcast_eph'] = self.extract(os.path.join(save_path, file_name))
                 found = True
                 break
-            except Exception as e:
+            except Exception:
                 continue
+
         if not found:
-            raise Exception(f"cannot find the broadcast ephemeris file.")
+            raise Exception("Cannot find broadcast ephemeris file (tried BRDC00IGS, BRDM00DLR, brdc).")
         
     def downloadPreciseFinalOrbit(self, save_path: str):
         """
@@ -135,18 +173,18 @@ class IGSDataDownloader(requests.Session):
             # Precise (Final) Orbit and Clock file (https://igs.org/products/#orbits_clocks)
             # Precise Orbits: https://cddis.nasa.gov/Data_and_Derived_Products/GNSS/orbit_products.html
             # - until week 2237:   https://cddis.nasa.gov/archive/gnss/products/WWWW/igsWWWWD.sp3.Z
-            url.append(f"{self.PROVIDER_URL}products/{self._date_obj['WWWW']}/igs{self._date_obj['WWWW']}{self._date_obj['D']}.sp3.Z")
-        else:    
+            url.append(f"{self.PROVIDER_URL}products/{self._date_obj['WWWW']}/igs{self._date_obj['WWWW']}{self._date_obj['D_us']}.sp3.Z")
+        else:
             # - from week 2338 on: 
             #      - https://cddis.nasa.gov/archive/gnss/products/wwww[/reproX]
             #      - https://cddis.nasa.gov/archive/gnss/products/latest
             #           - old name: igswwwwd.sp3.Z
             #           - new name: IGS0OPSFIN_yyyyddd0000_01D_15M_ORB.SP3.gz
-            url.append(f"{self.PROVIDER_URL}products/{self._date_obj['WWWW']}/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']}0000_01D_15M_ORB.SP3.gz")
-            url.append(f"{self.PROVIDER_URL}products/latest/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']}0000_01D_15M_ORB.SP3.gz")
+            url.append(f"{self.PROVIDER_URL}products/{self._date_obj['WWWW']}/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']:03d}0000_01D_15M_ORB.SP3.gz")
+            url.append(f"{self.PROVIDER_URL}products/latest/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']:03d}0000_01D_15M_ORB.SP3.gz")
             # trying also the old name
-            url.append(f"{self.PROVIDER_URL}products/{self._date_obj['WWWW']}/igs{self._date_obj['WWWW']}{self._date_obj['D']}.sp3.Z")
-            url.append(f"{self.PROVIDER_URL}products/latest/igs{self._date_obj['WWWW']}{self._date_obj['D']}.sp3.gz")
+            url.append(f"{self.PROVIDER_URL}products/{self._date_obj['WWWW']}/igs{self._date_obj['WWWW']}{self._date_obj['D_us']}.sp3.Z")
+            url.append(f"{self.PROVIDER_URL}products/latest/igs{self._date_obj['WWWW']}{self._date_obj['D_us']}.sp3.gz")
             
         for u in url:
             try:
@@ -169,17 +207,17 @@ class IGSDataDownloader(requests.Session):
         
         if self._date_obj['WWWW'] <= 2237:
             # - until week 2237:   https://cddis.nasa.gov/archive/gnss/products/WWWW/igsWWWWD.clk.Z
-            url.append(f"{self.PROVIDER_URL}products/{self._date_obj['WWWW']}/igs{self._date_obj['WWWW']}{self._date_obj['D']}.clk.Z")
+            url.append(f"{self.PROVIDER_URL}products/{self._date_obj['WWWW']}/igs{self._date_obj['WWWW']}{self._date_obj['D_us']}.clk.Z")
         else:
             # - from week 2338 on:
             #      - https://cddis.nasa.gov/archive/gnss/products/wwww[/reproX]
             #      - https://cddis.nasa.gov/archive/gnss/products/latest
             #           - old name: igswwwwd.clk.Z
             #           - new name: IGS0OPSFIN_yyyyddd0000_01D_05M_CLK.CLK.gz 
-            url.append(f"{self.PROVIDER_URL}products/{self._date_obj['WWWW']}/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']}0000_01D_05M_CLK.CLK.gz")
-            url.append(f"{self.PROVIDER_URL}products/latest/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']}0000_01D_05M_CLK.CLK.gz")
-            url.append(f"{self.PROVIDER_URL}products/{self._date_obj['WWWW']}/igs{self._date_obj['WWWW']}{self._date_obj['D']}.clk.Z")
-            url.append(f"{self.PROVIDER_URL}products/latest/igs{self._date_obj['WWWW']}{self._date_obj['D']}.clk.gz")
+            url.append(f"{self.PROVIDER_URL}products/{self._date_obj['WWWW']}/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']:03d}0000_01D_05M_CLK.CLK.gz")
+            url.append(f"{self.PROVIDER_URL}products/latest/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']:03d}0000_01D_05M_CLK.CLK.gz")
+            url.append(f"{self.PROVIDER_URL}products/{self._date_obj['WWWW']}/igs{self._date_obj['WWWW']}{self._date_obj['D_us']}.clk.Z")
+            url.append(f"{self.PROVIDER_URL}products/latest/igs{self._date_obj['WWWW']}{self._date_obj['D_us']}.clk.gz")
         for u in url:
             try:
                 file_name = self.download(u, save_path)
@@ -202,15 +240,15 @@ class IGSDataDownloader(requests.Session):
         
         if self._date_obj['WWWW'] <= 2237:
             # - until week 2237: https://cddis.nasa.gov/archive/gnss/products/ionex/YYYY/DDD/igsgddd0.yyi.Z
-            url.append(f"{self.PROVIDER_URL}products/ionex/{self._date_obj['YYYY']}/{self._date_obj['DDD']}/igsg{self._date_obj['DDD']}0.{self._date_obj['YY']}i.Z")
+            url.append(f"{self.PROVIDER_URL}products/ionex/{self._date_obj['YYYY']}/{self._date_obj['DDD']:03d}/igsg{self._date_obj['DDD']:03d}0.{self._date_obj['YY']}i.Z")
         else:
             # - from week 2238 on: https://cddis.nasa.gov/archive/gnss/products/ionex/WWWW/ (su igs dice YYYY/DDD...)
             #                      IGS0OPSFIN_yyyyddd0000_01D_02H_GIM.INX.gz (new name)
-            url.append(f"{self.PROVIDER_URL}products/ionex/{self._date_obj['WWWW']}/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']}0000_01D_02H_GIM.INX.gz")
-            url.append(f"{self.PROVIDER_URL}products/ionex/{self._date_obj['YYYY']}/{self._date_obj['DDD']}/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']}0000_01D_02H_GIM.INX.gz")
+            url.append(f"{self.PROVIDER_URL}products/ionex/{self._date_obj['WWWW']}/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']:03d}0000_01D_02H_GIM.INX.gz")
+            url.append(f"{self.PROVIDER_URL}products/ionex/{self._date_obj['YYYY']}/{self._date_obj['DDD']:03d}/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']:03d}0000_01D_02H_GIM.INX.gz")
             # trying also the old name
-            url.append(f"{self.PROVIDER_URL}products/ionex/{self._date_obj['WWWW']}/igsg{self._date_obj['DDD']}0.{self._date_obj['YY']}i.Z")
-            url.append(f"{self.PROVIDER_URL}products/ionex/{self._date_obj['YYYY']}/{self._date_obj['DDD']}/igsg{self._date_obj['DDD']}0.{self._date_obj['YY']}i.Z")
+            url.append(f"{self.PROVIDER_URL}products/ionex/{self._date_obj['WWWW']}/igsg{self._date_obj['DDD']:03d}0.{self._date_obj['YY']}i.Z")
+            url.append(f"{self.PROVIDER_URL}products/ionex/{self._date_obj['YYYY']}/{self._date_obj['DDD']:03d}/igsg{self._date_obj['DDD']:03d}0.{self._date_obj['YY']}i.Z")
         
         for u in url:
             try:
@@ -260,7 +298,7 @@ class IGSDataDownloader(requests.Session):
                 # | YY   | 2-digit year
                 # | .gz  | gzip compressed file
                 TYP = "zpd"
-                url.append(f"{self.PROVIDER_URL}products/troposphere/{TYP}/{self._date_obj['YYYY']}/{self._date_obj['DDD']}/{SSSS}{self._date_obj['DDD']}0.{self._date_obj['YY']}zpd.gz")
+                url.append(f"{self.PROVIDER_URL}products/troposphere/{TYP}/{self._date_obj['YYYY']}/{self._date_obj['DDD']:03d}/{SSSS}{self._date_obj['DDD']:03d}0.{self._date_obj['YY']}zpd.gz")
             else:
                 # - from week 2238 on: https://cddis.nasa.gov/archive/gnss/products/troposphere/zpd/
                 # Append the following directory and file names to the starting directory for current files: YYYY/IGS0OPSFIN_YYYYDOYHHMM_01D_05M_SITENAME_TRO.TRO.gz
@@ -275,7 +313,7 @@ class IGSDataDownloader(requests.Session):
                 TYP = "zpd"
                 HH = "00"
                 MM = "00"
-                url.append(f"{self.PROVIDER_URL}products/troposphere/{TYP}/{self._date_obj['YYYY']}/{self._date_obj['DDD']}/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']}{HH}{MM}_01D_05M_{SITENAME}_TRO.TRO.gz")
+                url.append(f"{self.PROVIDER_URL}products/troposphere/{TYP}/{self._date_obj['YYYY']}/{self._date_obj['DDD']:03d}/IGS0OPSFIN_{self._date_obj['YYYY']}{self._date_obj['DDD']:03d}{HH}{MM}_01D_05M_{SITENAME}_TRO.TRO.gz")
     
         for u in url:
             try:

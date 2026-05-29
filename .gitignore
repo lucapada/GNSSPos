@@ -1,11 +1,39 @@
-.idea
-venv_new
+# secrets
 .env
-__pycache__
-test*
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+
+# outputs / large binaries
+examples/experiments/*/outputs/*.pkl
+examples/experiments/*/outputs/*.pos
+examples/experiments/*/outputs/*.stat
+examples/experiments/figures/
+examples/experiments/*/figures/
+
+# IGS downloaded products (regenerate via igs_products.py / ensure_igs_products())
+examples/experiments/*.SP3
+examples/experiments/*.CLK
+examples/experiments/*.INX
+examples/experiments/*.TRO
+examples/experiments/brdc*.23n
+examples/experiments/BRDC*.rnx
+examples/experiments/BRDM*.rnx
+
+# raw data and rtklib sources (too large for git)
+examples/raw_data/
+rtklib_*/
+
+# IGS antenna calibration (not needed at project root)
+*.atx
+
+# misc
 TODO*
-examples/*
+NEXT_PROMPT.md
+old_prompt.md
 .agents
-RTKLIB_bin/
-NEW_VERSION.md
+.claude
 skills-lock.json
+NEW_VERSION.md

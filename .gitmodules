@@ -1,0 +1,4 @@
+[submodule "rtklib"]
+	path = rtklib
+	url = https://github.com/rtklibexplorer/RTKLIB.git
+	branch = demo5

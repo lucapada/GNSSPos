@@ -1,0 +1,33 @@
+services:
+  gnsspos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Override to use a different RTKLIB EX branch (e.g. b35, demo5)
+        RTKLIB_BRANCH: b34
+    image: gnsspos:latest
+
+    volumes:
+      # Raw GNSS data (read-only inside container)
+      - ./examples/raw_data:/app/examples/raw_data:ro
+      # IGS downloads (read-write so the downloader can cache files)
+      - ./examples/experiments:/app/examples/experiments
+      # Persist outputs and figures across runs
+      - ./examples/experiments/experiment_0/outputs:/app/examples/experiments/experiment_0/outputs
+      - ./examples/experiments/experiment_a/outputs:/app/examples/experiments/experiment_a/outputs
+      - ./examples/experiments/experiment_b/outputs:/app/examples/experiments/experiment_b/outputs
+      - ./examples/experiments/experiment_c/outputs:/app/examples/experiments/experiment_c/outputs
+      - ./examples/experiments/experiment_d/outputs:/app/examples/experiments/experiment_d/outputs
+      - ./examples/experiments/figures:/app/examples/experiments/figures
+
+    environment:
+      # NASA CDDIS credentials (loaded from .env)
+      NASA_USER: ${NASA_USER}
+      NASA_PWD: ${NASA_PWD}
+      # Path to the compiled rnx2rtkp binary (already set by Dockerfile)
+      RNX2RTKP_PATH: /app/examples/experiments/rnx2rtkp
+
+    # Override CMD to run a specific experiment:
+    #   docker compose run gnsspos python examples/experiments/experiment_c/run.py
+    command: python examples/experiments/plot.py
