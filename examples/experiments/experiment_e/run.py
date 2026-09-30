@@ -95,11 +95,23 @@ _P0_VEL   = 5.0        # m/s     — initial velocity uncertainty
 _H = np.hstack([np.eye(3), np.zeros((3, 3))])           # (3, 6)
 _F = np.block([[np.eye(3), _DT * np.eye(3)],            # (6, 6)
                [np.zeros((3, 3)), np.eye(3)]])
-_Q = np.diag([
-    (_SIGMA_P * _DT) ** 2, (_SIGMA_P * _DT) ** 2, (_SIGMA_P * _DT) ** 2,
-    (_SIGMA_V * _DT) ** 2, (_SIGMA_V * _DT) ** 2, (_SIGMA_V * _DT) ** 2,
-])
 _I6 = np.eye(6)
+
+
+def _build_Q(sigma_v: float) -> np.ndarray:
+    """Process noise for a given σ_v, σ_p fixed at module-level `_SIGMA_P`.
+
+    Factored out so `run_kf` can rebuild Q per-epoch when a curvature-adaptive
+    σ_v(t) is supplied (see experiment_e/run_adaptive.py) instead of the
+    constant σ_v used by the baseline (round 1) filter.
+    """
+    return np.diag([
+        (_SIGMA_P * _DT) ** 2, (_SIGMA_P * _DT) ** 2, (_SIGMA_P * _DT) ** 2,
+        (sigma_v * _DT) ** 2, (sigma_v * _DT) ** 2, (sigma_v * _DT) ** 2,
+    ])
+
+
+_Q = _build_Q(_SIGMA_V)
 
 
 # ---------------------------------------------------------------------------
@@ -184,8 +196,23 @@ def _initial_state(rows: list[pd.Series]) -> tuple[np.ndarray, np.ndarray]:
 # Kalman filter loop
 # ---------------------------------------------------------------------------
 
-def run_kf(aligned: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Constant-velocity KF on aligned rover DataFrames, sequential updates."""
+def run_kf(
+    aligned: dict[str, pd.DataFrame],
+    sigma_v_t: pd.Series | None = None,
+) -> pd.DataFrame:
+    """Constant-velocity KF on aligned rover DataFrames, sequential updates.
+
+    Parameters
+    ----------
+    aligned:
+        Per-rover DataFrames, all sharing the same time index (see `run()`).
+    sigma_v_t:
+        Optional per-epoch override of `_SIGMA_V`, indexed like the common
+        grid of `aligned`. When given, Q is rebuilt every epoch from
+        `sigma_v_t.loc[t]` instead of the constant module-level `_SIGMA_V`
+        (used by experiment_e/run_adaptive.py for curvature-adaptive
+        tuning). `None` reproduces the original constant-Q baseline exactly.
+    """
     rover_labels = list(aligned.keys())
     common_idx   = aligned[rover_labels[0]].index
 
@@ -206,8 +233,9 @@ def run_kf(aligned: dict[str, pd.DataFrame]) -> pd.DataFrame:
     n_predict_only = 0
     for t in common_idx:
         # Predict
+        Q = _build_Q(float(sigma_v_t.loc[t])) if sigma_v_t is not None else _Q
         x = _F @ x
-        P = _F @ P @ _F.T + _Q
+        P = _F @ P @ _F.T + Q
 
         # Sequential update over each rover with a valid row
         updates = 0
@@ -251,6 +279,12 @@ def run_kf(aligned: dict[str, pd.DataFrame]) -> pd.DataFrame:
             "sdun_m":        float(P[2, 0]),
             "age_s":         0.0,
             "ratio":         0.0,
+            "vn_ms":         float(x[3]),
+            "ve_ms":         float(x[4]),
+            "vu_ms":         float(x[5]),
+            "sdvn_ms":       float(np.sqrt(max(P[3, 3], 0.0))),
+            "sdve_ms":       float(np.sqrt(max(P[4, 4], 0.0))),
+            "sdvu_ms":       float(np.sqrt(max(P[5, 5], 0.0))),
         })
 
     if n_predict_only:
@@ -286,7 +320,8 @@ def write_pos(df: pd.DataFrame, path: Path) -> None:
             f"{row['sdn_m']:8.4f}  {row['sde_m']:8.4f}  {row['sdu_m']:8.4f}  "
             f"{row['sdne_m']:8.4f}  {row['sdeu_m']:8.4f}  {row['sdun_m']:8.4f}  "
             f"{row['age_s']:6.2f}  {row['ratio']:6.1f}"
-            "    0.00000    0.00000    0.00000   0.00000  0.00000  0.00000"
+            f"  {row['vn_ms']:9.5f}  {row['ve_ms']:9.5f}  {row['vu_ms']:9.5f}"
+            f"  {row['sdvn_ms']:7.5f}  {row['sdve_ms']:7.5f}  {row['sdvu_ms']:7.5f}"
             "   0.00000   0.00000   0.00000\n"
         )
         lines.append(line)
